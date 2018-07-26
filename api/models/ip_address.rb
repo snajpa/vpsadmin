@@ -1,7 +1,8 @@
 class IpAddress < ActiveRecord::Base
   belongs_to :network
-  belongs_to :vps, :foreign_key => :vps_id
+  belongs_to :network_interface
   belongs_to :user
+  has_many :host_ip_addresses
   has_many :ip_traffics
   has_many :ip_recent_traffics
 

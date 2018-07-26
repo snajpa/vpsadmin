@@ -3,8 +3,11 @@ class Vps < ActiveRecord::Base
   belongs_to :user
   belongs_to :os_template
   belongs_to :dns_resolver
-  has_many :ip_addresses
   has_many :transactions
+
+  has_many :network_interfaces
+  has_many :ip_addresses, through: :network_interfaces
+  has_many :host_ip_addresses, through: :network_interfaces
 
   has_many :vps_has_configs, -> { order '`order`' }
   has_many :vps_configs, through: :vps_has_configs
@@ -150,41 +153,7 @@ class Vps < ActiveRecord::Base
     TransactionChains::Vps::ApplyConfig.fire(self, configs, resources: true)
   end
 
-  # Unless +safe+ is true, the IP address +ip+ is fetched from the database
-  # again in a transaction, to ensure that it has not been given
-  # to any other VPS. Set +safe+ to true if +ip+ was fetched in a transaction.
-  def add_ip(ip, safe = false)
-    ::IpAddress.transaction do
-      ip = ::IpAddress.find(ip.id) unless safe
-
-      if ip.network.role == 'interconnecting'
-        raise VpsAdmin::API::Exceptions::InterconnectingIp
-      end
-
-      unless ip.network.location_id == node.location_id
-        raise VpsAdmin::API::Exceptions::IpAddressInvalidLocation
-      end
-
-      if !ip.free? || (ip.user_id && ip.user_id != self.user_id)
-        raise VpsAdmin::API::Exceptions::IpAddressInUse
-      end
-
-      if !ip.user_id && ::IpAddress.joins(:network).where(
-          user: self.user,
-          vps: nil,
-          networks: {
-            location_id: node.location_id,
-            ip_version: ip.network.ip_version,
-            role: ::Network.roles[ip.network.role],
-          }
-      ).exists?
-        raise VpsAdmin::API::Exceptions::IpAddressNotOwned
-      end
-
-      TransactionChains::Vps::AddIp.fire(self, [ip])
-    end
-  end
-
+  # TODO: rework with network interfaces
   def add_free_ip(v, role)
     ip = nil
 
@@ -196,22 +165,7 @@ class Vps < ActiveRecord::Base
     [chain, ip]
   end
 
-  # See #add_ip for more information about +safe+.
-  def delete_ip(ip, safe = false)
-    ::IpAddress.transaction do
-      ip = ::IpAddress.find(ip.id) unless safe
-
-      if ip.vps_id != self.id
-        raise VpsAdmin::API::Exceptions::IpAddressNotAssigned
-
-      elsif ip.network.role == 'interconnecting'
-        raise VpsAdmin::API::Exceptions::InterconnectingIp
-      end
-
-      TransactionChains::Vps::DelIp.fire(self, [ip])
-    end
-  end
-
+  # TODO: rework with network interfaces
   def delete_ips(v=nil)
     ::IpAddress.transaction do
       if v
